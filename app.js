@@ -7,7 +7,8 @@ const KEYS = {
   settings: "zyx_settings",
   favorites: "zyx_favorites",
   recent: "zyx_recent",
-  recipeTags: "zyx_recipe_tags"
+  recipeTags: "zyx_recipe_tags",
+  feedback: "zyx_feedback"
 };
 
 const SOURCE_LABELS = {
@@ -19,7 +20,8 @@ const SOURCE_LABELS = {
   bakery: "烘焙店",
   fruit: "水果店",
   stall: "小吃摊",
-  single: "单独食物"
+  single: "单独食物",
+  drink: "饮品"
 };
 
 const SOURCE_EMOJI = {
@@ -31,7 +33,8 @@ const SOURCE_EMOJI = {
   bakery: "🥐",
   fruit: "🍎",
   stall: "🍢",
-  single: "🥖"
+  single: "🥖",
+  drink: "🥤"
 };
 
 const MEAL_LABELS = {
@@ -50,6 +53,8 @@ const SNACK_SCENES = {
   study: "学习熬夜",
   craving: "嘴馋解馋"
 };
+
+const FEEDBACK_TYPES = ["热量/营养错误", "价格错误", "图片不符", "数据过期", "其他"];
 
 const ICONS = {
   home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/>',
@@ -72,6 +77,8 @@ const ICONS = {
   trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
   refresh: '<path d="M21 12a9 9 0 1 1-2.6-6.3M21 3v6h-6"/>',
   check: '<path d="m5 12 5 5L20 7"/>',
+  alert: '<circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/>',
+  copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
   leaf: '<path d="M4 20C4 10 10 4 20 4c0 10-6 16-16 16z"/><path d="M4 20c4-6 8-9 12-11"/>'
 };
 
@@ -156,6 +163,29 @@ function readPhotoFile(file) {
   });
 }
 
+function debounce(fn, ms) {
+  let timer = null;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), ms);
+  };
+}
+
+let storageOk = true;
+function checkStorage() {
+  try {
+    const k = "__zyx_probe__";
+    localStorage.setItem(k, "1");
+    localStorage.removeItem(k);
+  } catch (err) {
+    storageOk = false;
+  }
+}
+function storageWarningHtml() {
+  return storageOk ? "" : `<div class="storage-warning">当前浏览器禁止本地存储，记录和设置在刷新后会丢失；请使用线上版本或允许本站本地存储。</div>`;
+}
+checkStorage();
+
 const state = {
   tab: "home",
   pickIds: [],
@@ -169,6 +199,7 @@ const state = {
   customTags: loadJSON(KEYS.recipeTags, {}),
   filters: { q: "", source: "all", meal: "all", cal: "all", price: "all", snackScene: "all", sort: "default" },
   recordDate: todayStr(),
+  calDate: null,
   recordSubTab: "log",
   addMode: "recipe",
   addMealType: "lunch",
@@ -178,6 +209,11 @@ const state = {
   servings: 1,
   estimateDraft: [],
   addPhoto: null,
+  feedback: loadJSON(KEYS.feedback, []),
+  feedbackRecipeId: null,
+  feedbackType: "",
+  feedbackNote: "",
+  feedbackDone: false,
   detailId: null
 };
 
@@ -431,8 +467,99 @@ function addRecipeTag(id) {
   if (!arr.includes(label)) {
     state.customTags[id] = [...arr, label];
     saveJSON(KEYS.recipeTags, state.customTags);
+    saveJSON(KEYS.feedback, state.feedback);
   }
   openDetail(id);
+}
+
+function openFeedbackModal(recipeId) {
+  state.feedbackRecipeId = recipeId || null;
+  state.feedbackType = "";
+  state.feedbackNote = "";
+  state.feedbackDone = false;
+  $("#modal-root").insertAdjacentHTML("beforeend", feedbackOverlayHtml());
+  const note = $("#feedbackNote");
+  if (note) note.addEventListener("input", (e) => { state.feedbackNote = e.target.value; });
+}
+
+function closeFeedback() {
+  const el = $("#feedback-overlay");
+  if (el) el.remove();
+  else closeModal();
+}
+
+function renderFeedbackOverlay() {
+  const el = $("#feedback-overlay");
+  if (el) el.outerHTML = feedbackOverlayHtml();
+  const note = $("#feedbackNote");
+  if (note) note.addEventListener("input", (e) => { state.feedbackNote = e.target.value; });
+}
+
+function feedbackRecipe() {
+  return state.feedbackRecipeId ? RECIPES.find((r) => r.id === state.feedbackRecipeId) : null;
+}
+
+function feedbackText() {
+  const recipe = feedbackRecipe();
+  return [
+    "[再e亿下纠错]",
+    "菜谱：" + (recipe ? recipe.name : "整体"),
+    "类型：" + (state.feedbackType || "其他"),
+    "说明：" + (state.feedbackNote.trim() || "无"),
+    "时间：" + new Date().toLocaleString()
+  ].join("\n");
+}
+
+function feedbackOverlayHtml() {
+  const recipe = feedbackRecipe();
+  const done = state.feedbackDone;
+  return `<div class="sheet-backdrop feedback-overlay" id="feedback-overlay" data-action="close-feedback">
+    <div class="sheet">
+      <div class="sheet-head"><h2>纠错与建议</h2><button class="icon-btn" data-action="close-feedback" aria-label="关闭">${icon("x")}</button></div>
+      ${done ? `
+        <div class="feedback-done">
+          <p>已记录，谢谢反馈。</p>
+          <div class="feedback-preview">${esc(feedbackText())}</div>
+          <button class="btn-ghost btn-block" data-action="feedback-copy">${icon("copy")} 复制反馈内容</button>
+          <button class="btn-primary btn-block" style="margin-top:10px" data-action="close-feedback">完成</button>
+        </div>` : `
+        <p class="subtitle" style="margin-bottom:10px">${recipe ? `菜谱：${esc(recipe.name)}` : "针对菜谱库整体问题"}</p>
+        <div class="filter-scroll">${FEEDBACK_TYPES.map((t) => `<button class="chip${state.feedbackType === t ? " active" : ""}" data-action="feedback-type" data-value="${esc(t)}">${t}</button>`).join("")}</div>
+        <div class="form-grid" style="margin-top:12px">
+          <div class="field"><label>问题说明（可选）</label><textarea id="feedbackNote" placeholder="例如：这份菜的热量应该更高"></textarea></div>
+          <button class="btn-primary btn-block" data-action="feedback-submit">${icon("check")} 提交反馈</button>
+        </div>`}
+    </div>
+  </div>`;
+}
+function submitFeedback() {
+  const recipe = feedbackRecipe();
+  state.feedback.push({
+    id: uid(),
+    recipeId: state.feedbackRecipeId || "",
+    recipeName: recipe ? recipe.name : "",
+    type: state.feedbackType || "其他",
+    note: state.feedbackNote.trim(),
+    createdAt: Date.now()
+  });
+  saveJSON(KEYS.feedback, state.feedback);
+  state.feedbackDone = true;
+  renderFeedbackOverlay();
+}
+
+function copyFeedback() {
+  const text = feedbackText();
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => toast("已复制")).catch(() => toast("复制失败"));
+  } else {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    ta.remove();
+    toast("已复制");
+  }
 }
 
 function openDetail(id) {
@@ -469,6 +596,7 @@ function openDetail(id) {
           <div class="detail-row"><span>位置</span><div>${esc(recipe.place)}</div></div>
           <div class="detail-row"><span>数据来源</span><div>${esc(recipe.dataSource)}</div></div>
           <div class="detail-row"><span>更新时间</span><div><span class="badge ${fresh.cls}">${fresh.label}</span></div></div>
+          <button class="feedback-link" data-action="open-feedback" data-id="${recipe.id}">${icon("alert")} 纠错</button>
         </div>
         ${recipe.allergens && recipe.allergens.length ? `<div class="detail-section"><h3>忌口提示</h3><div>${recipe.allergens.map((a) => `<span class="badge danger">${a}</span>`).join(" ")}</div></div>` : ""}
         ${recipe.mealTypes.includes("snack") ? `
@@ -511,7 +639,7 @@ function renderHome() {
   const recents = state.recent.map((id) => RECIPES.find((r) => r.id === id)).filter(Boolean);
   const favs = state.favorites.map((id) => RECIPES.find((r) => r.id === id)).filter(Boolean);
   $("#app").innerHTML = `
-    ${topbarHtml()}
+    ${topbarHtml()}${storageWarningHtml()}
     <div class="view-body">
       <p class="subtitle">今天也要好好吃饭</p>
       <section class="surface calorie-card">
@@ -625,7 +753,7 @@ function toggleMorePanel(type) {
 function renderRecipes() {
   const f = state.filters;
   $("#app").innerHTML = `
-    ${topbarHtml("菜谱库", `<span class="subtitle">${RECIPES.length} 个通用方案</span>`)}
+    ${topbarHtml("菜谱库", `<span class="subtitle">${RECIPES.length} 个通用方案</span>`)}${storageWarningHtml()}
     <div class="view-body">
       <div class="search-wrap">${icon("search")}<input class="search-input" id="recipeSearch" placeholder="搜菜名、食材或位置" value="${esc(f.q)}"></div>
       <div class="filter-group overflow-group" data-type="source">
@@ -649,28 +777,17 @@ function renderRecipes() {
         <div class="filter-group-label">预算（¥）</div>
         <div class="filter-scroll">${chipHtml(["all", "low", "mid", "high"], f.price, "price", { all: "全部", low: "≤¥10", mid: "¥10-15", high: ">¥15" })}</div>
       </div>
-      <div class="filter-group">
+      <div class="filter-group overflow-group" data-type="sort">
         <div class="filter-group-label">排序</div>
-        <div class="filter-scroll">
-          <select class="search-input" id="recipeSort" aria-label="排序">
-            <option value="default"${f.sort === "default" ? " selected" : ""}>默认排序</option>
-            <option value="calAsc"${f.sort === "calAsc" ? " selected" : ""}>热量从低到高</option>
-            <option value="priceAsc"${f.sort === "priceAsc" ? " selected" : ""}>价格从低到高</option>
-            <option value="timeAsc"${f.sort === "timeAsc" ? " selected" : ""}>制作时间从短到长</option>
-          </select>
-        </div>
+        <div class="filter-scroll">${chipHtml(["default", "calAsc", "priceAsc", "timeAsc"], f.sort, "sort", { default: "默认排序", calAsc: "热量从低到高", priceAsc: "价格从低到高", timeAsc: "制作时间从短到长" })}</div>
       </div>
       <div id="recipeResults"></div>
     </div>`;
   renderRecipeResults();
-  $("#recipeSearch").addEventListener("input", (e) => {
+  $("#recipeSearch").addEventListener("input", debounce((e) => {
     state.filters.q = e.target.value;
     renderRecipeResults();
-  });
-  $("#recipeSort").addEventListener("change", (e) => {
-    state.filters.sort = e.target.value;
-    renderRecipeResults();
-  });
+  }, 250));
   setupOverflowGroups();
 }
 
@@ -713,12 +830,16 @@ function getFilteredRecipes() {
 function renderRecipeResults() {
   const el = $("#recipeResults");
   if (!el) return;
-  const list = getFilteredRecipes();
-  if (!list.length) {
-    el.innerHTML = empty("没有找到符合条件的菜谱");
-    return;
+  try {
+    const list = getFilteredRecipes();
+    if (!list.length) {
+      el.innerHTML = empty("没有找到符合条件的菜谱");
+      return;
+    }
+    el.innerHTML = `<div class="recipe-list">${list.map(recipeCardHtml).join("")}</div>`;
+  } catch (err) {
+    el.innerHTML = empty("搜索出了一点问题，请换个关键词");
   }
-  el.innerHTML = `<div class="recipe-list">${list.map(recipeCardHtml).join("")}</div>`;
 }
 
 function recipeCardHtml(recipe) {
@@ -739,10 +860,55 @@ function recipeCardHtml(recipe) {
   </article>`;
 }
 
+function openCalendar() {
+  state.calDate = `${state.recordDate.slice(0, 7)}-01`;
+  renderCalendarModal();
+}
+
+function closeCalendar() {
+  const el = $("#calendar-overlay");
+  if (el) el.remove();
+}
+
+function renderCalendarModal() {
+  const [y, m] = state.calDate.slice(0, 7).split("-").map(Number);
+  const today = todayStr();
+  const first = new Date(y, m - 1, 1);
+  const startDow = first.getDay();
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const recordDates = new Set(state.records.map((r) => r.date));
+  const week = ["日", "一", "二", "三", "四", "五", "六"].map((w) => `<span class="cal-week">${w}</span>`).join("");
+  let cells = "";
+  for (let i = 0; i < startDow; i += 1) cells += '<span class="cal-empty"></span>';
+  for (let d = 1; d <= daysInMonth; d += 1) {
+    const ds = `${y}-${pad2(m)}-${pad2(d)}`;
+    const cls = ["cal-day"];
+    if (ds === today) cls.push("today");
+    if (ds === state.recordDate) cls.push("selected");
+    if (recordDates.has(ds)) cls.push("has-record");
+    cells += `<button class="${cls.join(" ")}" data-action="calendar-pick" data-value="${ds}">${d}${recordDates.has(ds) ? "<i></i>" : ""}</button>`;
+  }
+  const html = `<div class="sheet-backdrop" id="calendar-overlay" data-action="close-calendar">
+    <div class="sheet">
+      <div class="sheet-head"><h2>选择日期</h2><button class="icon-btn" data-action="close-calendar" aria-label="关闭">${icon("x")}</button></div>
+      <div class="cal-nav">
+        <button class="nav-btn" data-action="cal-month" data-delta="-1" aria-label="上个月">${icon("left")}</button>
+        <span class="cal-title">${y}年${m}月</span>
+        <button class="nav-btn" data-action="cal-month" data-delta="1" aria-label="下个月">${icon("right")}</button>
+      </div>
+      <div class="cal-grid">${week}${cells}</div>
+      <button class="btn-ghost btn-block" data-action="cal-today" style="margin-top:12px">回到今天</button>
+    </div>
+  </div>`;
+  const overlay = $("#calendar-overlay");
+  if (overlay) overlay.outerHTML = html;
+  else $("#modal-root").insertAdjacentHTML("beforeend", html);
+}
+
 function renderRecordView() {
   const sub = state.recordSubTab;
   $("#app").innerHTML = `
-    ${topbarHtml("记录与统计")}
+    ${topbarHtml("记录与统计")}${storageWarningHtml()}
     <div class="view-body">
       <div class="sub-tabs">
         <button class="sub-tab${sub === "log" ? " active" : ""}" data-action="record-subtab" data-value="log">记录</button>
@@ -762,7 +928,7 @@ function recordLogHtml() {
   return `
     <div class="date-nav">
       <button class="nav-btn" data-action="record-date-prev" aria-label="前一天">${icon("left")}</button>
-      <div class="date-label">${label}<span>${isToday ? "今日已摄入 " : ""}${totals.calories} kcal</span></div>
+      <button class="date-label" data-action="open-calendar" aria-label="选择日期">${label}<span>${isToday ? "今日已摄入 " : ""}${totals.calories} kcal</span></button>
       <button class="nav-btn" data-action="record-date-next" ${isToday ? "disabled" : ""} aria-label="后一天">${icon("right")}</button>
     </div>
     ${groups.length ? groups.map((g) => `
@@ -779,9 +945,16 @@ function recordItemHtml(record) {
   const meta = [record.servings !== 1 ? `${record.servings} 份` : "", record.time, record.note ? esc(record.note) : ""]
     .filter(Boolean)
     .join(" · ");
+  const recipe = RECIPES.find((r) => r.id === record.source);
+  const tags = recipe ? [...(recipe.tags || [])] : [];
+  for (const t of recipeTagsOf(record.source)) {
+    const label = SNACK_SCENES[t] || t;
+    if (!tags.includes(label)) tags.push(label);
+  }
+  const tagHtml = tags.length ? `<div class="rec-tags">${tags.map((t) => `<span>${esc(t)}</span>`).join("")}</div>` : "";
   return `<div class="record-item">
     <span class="rec-emoji">${thumb}</span>
-    <div class="rec-main"><h4>${esc(record.name)}</h4>${meta ? `<p>${meta}</p>` : ""}</div>
+    <div class="rec-main"><h4>${esc(record.name)}</h4>${meta ? `<p>${meta}</p>` : ""}${tagHtml}</div>
     <span class="rec-kcal">${record.calories} kcal</span>
     <button class="rec-del" data-action="delete-record" data-id="${record.id}" aria-label="删除">${icon("trash")}</button>
   </div>`;
@@ -839,10 +1012,15 @@ function statsHtml() {
 }
 
 function renderMine() {
+  const latestDataDate = RECIPES.reduce((mx, r) => (r.dataUpdatedAt > mx ? r.dataUpdatedAt : mx), "");
   $("#app").innerHTML = `
-    ${topbarHtml("我的")}
+    ${topbarHtml("我的")}${storageWarningHtml()}
     <div class="view-body">
       <div class="info-banner">${icon("leaf")} 无需登录 · 数据保存在本机</div>
+      <div class="setting-group">
+        <div class="setting-label">反馈</div>
+        <button class="btn-ghost btn-block" data-action="open-feedback">${icon("alert")} 纠错与建议</button>
+      </div>
       <div class="setting-group">
         <div class="setting-label">每日热量目标</div>
         <div class="goal-stepper">
@@ -874,7 +1052,15 @@ function renderMine() {
         </div>
         <button class="btn-warm btn-block" style="margin-top:10px" data-action="clear-data">${icon("trash")} 清空本机数据</button>
       </div>
-      <div class="about-note">再e亿下 · MVP 原型 V0.1（对应 PRD V1.2）<br>菜谱为公开数据整理的通用方案，热量与价格为估算值，具体以食堂、店铺当日实际供应为准。</div>
+      <div class="setting-group">
+        <div class="setting-label">数据与免责</div>
+        <div class="about-card">
+          <div class="about-row"><span>菜谱数据更新</span><b>${latestDataDate || "待更新"}</b></div>
+          <div class="about-row"><span>图片来源</span><b>公开网络检索 · 本地缓存</b></div>
+          <p>热量、营养与价格均为估算值，具体供应以食堂、店铺当日实际为准。菜品图片版权归原作者或来源平台所有，正式发布前需替换为可商用图源。本产品不替代医生、营养师或健身教练的专业建议。</p>
+        </div>
+      </div>
+      <div class="about-note">再e亿下 · MVP 原型 V0.1（对应 PRD V1.2）</div>
     </div>`;
 }
 
@@ -913,17 +1099,17 @@ function renderAddModal() {
     </div>`;
   const addSearch = $("#addRecipeSearch");
   if (addSearch) {
-    addSearch.addEventListener("input", (e) => {
+    addSearch.addEventListener("input", debounce((e) => {
       state.addQ = e.target.value;
       renderAddRecipeList();
-    });
+    }, 250));
   }
   const foodSearch = $("#estimateFoodSearch");
   if (foodSearch) {
-    foodSearch.addEventListener("input", (e) => {
+    foodSearch.addEventListener("input", debounce((e) => {
       state.foodQ = e.target.value;
       renderFoodList();
-    });
+    }, 250));
   }
 }
 
@@ -963,7 +1149,12 @@ function addRecipeListHtml() {
 
 function renderAddRecipeList() {
   const el = $("#addRecipeList");
-  if (el) el.innerHTML = addRecipeListHtml();
+  if (!el) return;
+  try {
+    el.innerHTML = addRecipeListHtml();
+  } catch (err) {
+    el.innerHTML = empty("没有找到菜谱");
+  }
 }
 
 function estimateModeHtml() {
@@ -996,7 +1187,12 @@ function foodListHtml() {
 
 function renderFoodList() {
   const el = $("#foodList");
-  if (el) el.innerHTML = foodListHtml();
+  if (!el) return;
+  try {
+    el.innerHTML = foodListHtml();
+  } catch (err) {
+    el.innerHTML = empty("没有找到食物");
+  }
 }
 
 function draftItemHtml(item) {
@@ -1160,7 +1356,8 @@ function exportData() {
     records: state.records,
     favorites: state.favorites,
     recent: state.recent,
-    recipeTags: state.customTags
+    recipeTags: state.customTags,
+    feedback: state.feedback
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -1180,6 +1377,7 @@ function clearData() {
   state.favorites = [];
   state.recent = [];
   state.customTags = {};
+  state.feedback = [];
   state.settings = { dailyGoal: 1600, sources: [], dislikes: [] };
   Object.values(KEYS).forEach((k) => {
     try {
@@ -1208,6 +1406,31 @@ document.addEventListener("click", (e) => {
   else if (action === "goto-recipes") switchTab("recipes");
   else if (action === "open-detail") openDetail(id);
   else if (action === "close-detail") closeModal();
+  else if (action === "open-feedback") openFeedbackModal(id || null);
+  else if (action === "close-feedback") {
+    if (el.classList.contains("sheet-backdrop") && e.target !== el) return;
+    closeFeedback();
+  } else if (action === "open-calendar") openCalendar();
+  else if (action === "close-calendar") {
+    if (el.classList.contains("sheet-backdrop") && e.target !== el) return;
+    closeCalendar();
+  } else if (action === "cal-month") {
+    const [y, m] = state.calDate.slice(0, 7).split("-").map(Number);
+    const next = new Date(y, m - 1 + Number(el.dataset.delta), 1);
+    state.calDate = `${next.getFullYear()}-${pad2(next.getMonth() + 1)}-01`;
+    renderCalendarModal();
+  } else if (action === "calendar-pick") {
+    state.recordDate = value;
+    closeCalendar();
+    renderRecordView();
+  } else if (action === "cal-today") {
+    state.recordDate = todayStr();
+    closeCalendar();
+    renderRecordView();
+  }
+  else if (action === "feedback-type") { state.feedbackType = value; renderFeedbackOverlay(); }
+  else if (action === "feedback-submit") submitFeedback();
+  else if (action === "feedback-copy") copyFeedback();
   else if (action === "toggle-fav") toggleFavorite(id);
   else if (action === "toggle-recipe-tag") toggleRecipeTag(id, value);
   else if (action === "add-recipe-tag") addRecipeTag(id);
@@ -1241,7 +1464,10 @@ document.addEventListener("click", (e) => {
   else if (action === "export-data") exportData();
   else if (action === "import-data") $("#import-file").click();
   else if (action === "clear-data") clearData();
-  else if (action === "close-modal") closeModal();
+  else if (action === "close-modal") {
+    if (el.classList.contains("sheet-backdrop") && e.target !== el) return;
+    closeModal();
+  }
   else if (action === "add-tab") {
     state.addMode = value;
     renderAddModal();
@@ -1281,11 +1507,13 @@ $("#import-file").addEventListener("change", async (e) => {
     if (Array.isArray(data.favorites)) state.favorites = data.favorites;
     if (Array.isArray(data.recent)) state.recent = data.recent;
     if (data.recipeTags && typeof data.recipeTags === "object") state.customTags = data.recipeTags;
+    if (Array.isArray(data.feedback)) state.feedback = data.feedback;
     saveJSON(KEYS.records, state.records);
     saveJSON(KEYS.settings, state.settings);
     saveJSON(KEYS.favorites, state.favorites);
     saveJSON(KEYS.recent, state.recent);
     saveJSON(KEYS.recipeTags, state.customTags);
+    saveJSON(KEYS.feedback, state.feedback);
     renderAll();
     toast("已导入");
   } catch (err) {

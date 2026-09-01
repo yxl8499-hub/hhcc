@@ -77,7 +77,7 @@ const fs = require("fs");
   console.log("RECIPES_COUNT", recipeCount);
   const sourceCounts = await page.evaluate(() =>
     Object.fromEntries(
-      ["canteen", "takeout", "supermarket", "cook", "convenience", "bakery", "fruit", "stall", "single"].map((s) => [
+      ["canteen", "takeout", "supermarket", "cook", "convenience", "bakery", "fruit", "stall", "single", "drink"].map((s) => [
         s,
         RECIPES.filter((r) => r.source === s).length
       ])

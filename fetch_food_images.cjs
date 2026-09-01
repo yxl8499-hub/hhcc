@@ -85,7 +85,17 @@ const QUERIES = {
   "burger-bk": "汉堡王皇堡",
   "burger-hualai": "华莱士汉堡",
   "burger-tastien": "塔斯汀汉堡",
-  "burger-dicos": "德克士汉堡"
+  "burger-dicos": "德克士汉堡",
+  "lemon-water": "柠檬水",
+  "americano": "美式咖啡",
+  "oat-latte": "燕麦拿铁",
+  "sparkling-water": "气泡水",
+  "coconut-water": "椰子水",
+  "orange-juice": "鲜榨橙汁",
+  "green-tea": "绿茶",
+  "red-bean-drink": "红豆薏米水",
+  "matcha-latte": "抹茶拿铁",
+  "electrolyte-drink": "电解质水"
 };
 
 function getJson(url) {
