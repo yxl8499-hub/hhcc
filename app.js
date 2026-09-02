@@ -936,7 +936,8 @@ function recordLogHtml() {
         <div class="record-group-title"><span>${MEAL_LABELS[g.mealType]}</span><span>${g.items.reduce((s, r) => s + (r.calories || 0), 0)} kcal</span></div>
         ${g.items.map(recordItemHtml).join("")}
       </div>`).join("") : empty("这天还没有记录", "🍽️")}
-    <button class="btn-primary btn-block" data-action="add-record" style="margin-top:14px">${icon("plus")} 记一餐</button>`;
+    <button class="btn-primary btn-block" data-action="add-record" style="margin-top:14px">${icon("plus")} 记一餐</button>
+    <button class="btn-warm btn-block" style="margin-top:10px" data-action="clear-records">${icon("trash")} 清空全部记录</button>`;
 }
 
 function recordItemHtml(record) {
@@ -1114,20 +1115,30 @@ function renderAddModal() {
 }
 
 function addRecipeModeHtml() {
-  const selected = RECIPES.find((r) => r.id === state.addRecipeId);
   return `
     <div class="search-wrap add-search">${icon("search")}<input class="search-input" id="addRecipeSearch" placeholder="搜菜谱"></div>
     <div id="addRecipeList" class="add-recipe-list">${addRecipeListHtml()}</div>
-    ${selected ? `
-      <div class="draft-box">
-        <h4>已选择：${esc(selected.name)}</h4>
-        <div class="draft-item"><span class="name">${esc(selected.name)}</span><span class="kcal">${selected.calories} kcal</span></div>
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px">
-          <span class="subtitle">份数</span>
-          <div class="stepper"><button data-action="servings-minus" aria-label="减少">−</button><span>${state.servings}</span><button data-action="servings-plus" aria-label="增加">+</button></div>
-        </div>
-        <button class="btn-primary btn-block" style="margin-top:12px" data-action="save-recipe-record">${icon("check")} 保存这餐</button>
-      </div>` : ""}`;
+    <div id="addDraft">${addDraftHtml()}</div>`;
+}
+
+function addDraftHtml() {
+  const selected = RECIPES.find((r) => r.id === state.addRecipeId);
+  if (!selected) return "";
+  return `
+    <div class="draft-box">
+      <h4>已选择：${esc(selected.name)}</h4>
+      <div class="draft-item"><span class="name">${esc(selected.name)}</span><span class="kcal">${selected.calories} kcal</span></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px">
+        <span class="subtitle">份数</span>
+        <div class="stepper"><button data-action="servings-minus" aria-label="减少">−</button><span>${state.servings}</span><button data-action="servings-plus" aria-label="增加">+</button></div>
+      </div>
+      <button class="btn-primary btn-block" style="margin-top:12px" data-action="save-recipe-record">${icon("check")} 保存这餐</button>
+    </div>`;
+}
+
+function renderAddDraft() {
+  const el = $("#addDraft");
+  if (el) el.innerHTML = addDraftHtml();
 }
 
 function addRecipeListHtml() {
@@ -1141,7 +1152,7 @@ function addRecipeListHtml() {
       <div class="add-recipe-item${state.addRecipeId === r.id ? " active" : ""}" data-action="choose-recipe" data-id="${r.id}">
         <img src="${r.imageUrl}" alt="${esc(r.name)}" loading="lazy" onerror="imgFallback(this, '${r.emoji}', 'add-recipe-item')">
         <div><h4>${esc(r.name)}</h4><p>${SOURCE_LABELS[r.source]} · ${r.calories} kcal · ¥${r.price}</p></div>
-        <span class="plus">${icon("plus")}</span>
+        <button class="plus" data-action="record-recipe" data-id="${r.id}" aria-label="直接记录">${icon("plus")}</button>
       </div>`
     )
     .join("") || empty("没有找到菜谱", "🍽️");
@@ -1326,6 +1337,14 @@ function saveManualRecord() {
   toast("已记录");
 }
 
+function clearRecords() {
+  if (!window.confirm("确定清空全部饮食记录？此操作不可撤销。")) return;
+  state.records = [];
+  saveJSON(KEYS.records, state.records);
+  renderRecordView();
+  toast("已清空记录");
+}
+
 function deleteRecord(id) {
   if (!window.confirm("删除这条记录？")) return;
   state.records = state.records.filter((r) => r.id !== id);
@@ -1453,6 +1472,7 @@ document.addEventListener("click", (e) => {
     state.recordSubTab = value;
     renderRecordView();
   } else if (action === "delete-record") deleteRecord(id);
+  else if (action === "clear-records") clearRecords();
   else if (action === "goal-minus") adjustGoal(-50);
   else if (action === "goal-plus") adjustGoal(50);
   else if (action === "goal-chip") {
@@ -1482,13 +1502,14 @@ document.addEventListener("click", (e) => {
   } else if (action === "choose-recipe") {
     state.addRecipeId = id;
     state.servings = 1;
-    renderAddModal();
+    $$(".add-recipe-item").forEach((el) => el.classList.toggle("active", el.dataset.id === id));
+    renderAddDraft();
   } else if (action === "servings-minus") {
     state.servings = Math.max(0.5, state.servings - 0.5);
-    renderAddModal();
+    renderAddDraft();
   } else if (action === "servings-plus") {
     state.servings = Math.min(4, state.servings + 0.5);
-    renderAddModal();
+    renderAddDraft();
   } else if (action === "save-recipe-record") saveRecipeRecord();
   else if (action === "estimate-pick") addEstimateFood(id);
   else if (action === "estimate-qty") adjustEstimateQty(id, Number(el.dataset.delta));
